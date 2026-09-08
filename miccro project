@@ -1,0 +1,467 @@
+import pygame
+import math
+import random
+import sys
+
+pygame.init()
+
+# Window Setup
+WIDTH, HEIGHT = 950, 750
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Void Vanguard: Bullet-Hell Nightmare Edition")
+clock = pygame.time.Clock()
+
+# Color Palette
+C_BG          = (8, 10, 18)
+C_WHITE       = (240, 245, 255)
+C_CYAN        = (0, 240, 255)
+C_BLUE        = (40, 130, 255)
+C_RED         = (255, 50, 70)
+C_GREEN       = (60, 240, 120)
+C_ORANGE      = (255, 140, 40)
+C_PURPLE      = (180, 70, 255)
+C_YELLOW      = (255, 220, 40)
+C_DARK_BAR    = (20, 22, 35)
+
+# Fonts
+font_tiny  = pygame.font.SysFont("monospace", 11, bold=True)
+font_small = pygame.font.SysFont("monospace", 14)
+font_med   = pygame.font.SysFont("monospace", 18, bold=True)
+font_large = pygame.font.SysFont("monospace", 38, bold=True)
+
+# ------------------------------------------------------------------------------
+# Starfield Background
+# ------------------------------------------------------------------------------
+stars = [[random.randint(0, WIDTH), random.randint(0, HEIGHT), random.uniform(0.6, 3.2)] for _ in range(140)]
+
+def update_and_draw_stars(surface):
+    for star in stars:
+        star[1] += star[2] * 1.5  # Faster hyperspace feel
+        if star[1] > HEIGHT:
+            star[1] = 0
+            star[0] = random.randint(0, WIDTH)
+        col_val = min(255, int(star[2] * 80))
+        b_val   = min(255, col_val + 30)
+        radius  = max(1, int(star[2] * 0.8))
+        pygame.draw.circle(surface, (col_val, col_val, b_val), (int(star[0]), int(star[1])), radius)
+
+# ------------------------------------------------------------------------------
+# Particle Engine
+# ------------------------------------------------------------------------------
+particles = []
+
+def add_particle(x, y, vx, vy, color, lifetime, radius):
+    particles.append({"x": x, "y": y, "vx": vx, "vy": vy, "color": color, "life": lifetime, "max_life": lifetime, "r": radius})
+
+def update_and_draw_particles(surface):
+    for p in particles[:]:
+        p["x"] += p["vx"]
+        p["y"] += p["vy"]
+        p["life"] -= 1
+        alpha = max(0.0, p["life"] / p["max_life"])
+        r = max(1, int(p["r"] * alpha))
+        pygame.draw.circle(surface, p["color"], (int(p["x"]), int(p["y"])), r)
+        if p["life"] <= 0:
+            particles.remove(p)
+
+# ------------------------------------------------------------------------------
+# Player Entity (Spaceship with I-Frames & Dash)
+# ------------------------------------------------------------------------------
+class Player:
+    def __init__(self, x, y):
+        self.x = float(x)
+        self.y = float(y)
+        self.speed = 6.5
+        self.max_health = 100.0
+        self.health = self.max_health
+        self.shoot_cooldown = 0
+        self.radius = 16
+        self.dash_cooldown = 0
+        self.invulnerable_timer = 0
+
+    def move(self, dx, dy, dash_pressed):
+        # Dash mechanic (Invulnerability frames + burst of speed)
+        if dash_pressed and self.dash_cooldown <= 0 and (dx != 0 or dy != 0):
+            self.x += dx * 75
+            self.y += dy * 75
+            self.dash_cooldown = 45
+            self.invulnerable_timer = 18
+            for _ in range(25):
+                add_particle(self.x, self.y, random.uniform(-4, 4), random.uniform(-4, 4), C_CYAN, 20, 5)
+        else:
+            self.x += dx * self.speed
+            self.y += dy * self.speed
+
+        self.x = max(20, min(WIDTH - 20, self.x))
+        self.y = max(HEIGHT // 2 - 50, min(HEIGHT - 40, self.y))
+
+        if self.dash_cooldown > 0:
+            self.dash_cooldown -= 1
+        if self.invulnerable_timer > 0:
+            self.invulnerable_timer -= 1
+
+        # Thruster particle trail
+        if random.random() < 0.85:
+            add_particle(self.x + random.uniform(-5, 5), self.y + 18, 
+                         random.uniform(-0.5, 0.5), random.uniform(3, 7), 
+                         C_CYAN if self.invulnerable_timer > 0 else C_ORANGE, random.randint(12, 22), 4)
+
+    def draw(self, surface):
+        # Flash when invulnerable
+        if self.invulnerable_timer > 0 and (self.invulnerable_timer // 3) % 2 == 0:
+            return
+
+        nose  = (self.x, self.y - 22)
+        left  = (self.x - 18, self.y + 18)
+        right = (self.x + 18, self.y + 18)
+        inner = (self.x, self.y + 8)
+
+        pygame.draw.polygon(surface, C_BLUE, [nose, left, inner])
+        pygame.draw.polygon(surface, C_BLUE, [nose, right, inner])
+        pygame.draw.polygon(surface, C_CYAN, [nose, left, right], 2)
+        pygame.draw.circle(surface, C_WHITE, (int(self.x), int(self.y - 4)), 5)
+        pygame.draw.polygon(surface, C_ORANGE, [(self.x - 6, self.y + 12), (self.x + 6, self.y + 12), (self.x, self.y + 24)])
+
+# ------------------------------------------------------------------------------
+# Projectiles
+# ------------------------------------------------------------------------------
+class Bullet:
+    def __init__(self, x, y, vx, vy, is_player=True, color=C_RED, radius=5):
+        self.x = x
+        self.y = y
+        self.vx = vx
+        self.vy = vy
+        self.is_player = is_player
+        self.color = color
+        self.radius = radius
+        self.alive = True
+
+    def update(self):
+        self.x += self.vx
+        self.y += self.vy
+        if self.y < -30 or self.y > HEIGHT + 30 or self.x < -30 or self.x > WIDTH + 30:
+            self.alive = False
+
+    def draw(self, surface):
+        pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.radius)
+        pygame.draw.circle(surface, C_WHITE, (int(self.x), int(self.y)), max(1, self.radius - 2))
+
+# ------------------------------------------------------------------------------
+# High-Difficulty Boss AI (Multi-Pattern Bullet Hell + Adaptive Dodge)
+# ------------------------------------------------------------------------------
+class Boss:
+    def __init__(self, level=1):
+        self.level = level
+        self.x = float(random.randint(180, WIDTH - 180))
+        self.y = -100.0
+        self.target_y = random.randint(130, 260)
+        self.radius = 44
+        self.max_health = 350.0 + (level - 1) * 140.0
+        self.health = self.max_health
+        self.base_regen = 0.18 + (level - 1) * 0.06
+        self.move_angle = random.uniform(0, math.pi * 2)
+        self.move_speed = 0.035 + min(0.04, level * 0.005)
+        self.hover_width = random.randint(150, 280)
+        self.alive = True
+
+        # Dodge Intelligence
+        self.dodge_offset_x = 0.0
+        self.dodge_cooldown = 0
+
+        # Bullet-Hell Pattern Timers
+        self.pattern_timer = 0
+        self.spiral_angle = 0.0
+        self.attack_mode = 0
+
+    def update(self, player_x, player_y, bullets):
+        if self.y < self.target_y:
+            self.y += 2.8
+            return
+
+        # Enrage phase check (< 35% HP)
+        is_enraged = (self.health / self.max_health) < 0.35
+        regen_mult = 2.0 if is_enraged else 1.0
+
+        # Continuous Health Regeneration
+        if self.health < self.max_health:
+            self.health = min(self.max_health, self.health + self.base_regen * regen_mult)
+
+        # ----------------------------------------------------------------------
+        # Reactive Predictive Dodging AI
+        # ----------------------------------------------------------------------
+        if self.dodge_cooldown > 0:
+            self.dodge_cooldown -= 1
+
+        danger_detected = False
+        evade_dir = 1.0
+
+        for b in bullets:
+            if b.is_player and b.alive:
+                dy = b.y - self.y
+                dx = b.x - self.x
+                # Detect direct line-of-fire within 180px
+                if 0 < dy < 200 and abs(dx) < (self.radius + 28):
+                    danger_detected = True
+                    evade_dir = -1.2 if dx >= 0 else 1.2
+                    break
+
+        if danger_detected and self.dodge_cooldown <= 0:
+            if self.x < 160:
+                evade_dir = 1.4
+            elif self.x > WIDTH - 160:
+                evade_dir = -1.4
+
+            burst = 70.0 + min(40.0, self.level * 6.0)
+            self.dodge_offset_x += evade_dir * burst
+            self.dodge_cooldown = max(14, 34 - self.level * 2)
+
+            for _ in range(16):
+                add_particle(self.x, self.y, -evade_dir * random.uniform(5, 10), random.uniform(-3, 3), C_PURPLE, 20, 5)
+
+        self.dodge_offset_x *= 0.86
+
+        # Flight hover
+        self.move_angle += self.move_speed * (1.3 if is_enraged else 1.0)
+        self.x = (WIDTH // 2) + math.sin(self.move_angle) * self.hover_width + self.dodge_offset_x
+        self.x = max(self.radius + 15, min(WIDTH - self.radius - 15, self.x))
+        self.y = self.target_y + math.sin(self.move_angle * 2.2) * 45
+
+        # ----------------------------------------------------------------------
+        # Bullet-Hell Attack Patterns
+        # ----------------------------------------------------------------------
+        self.pattern_timer += 1
+        attack_speed = max(18, 48 - self.level * 4) if not is_enraged else max(10, 26 - self.level * 2)
+
+        if self.pattern_timer >= attack_speed:
+            self.pattern_timer = 0
+            self.attack_mode = (self.attack_mode + 1) % 3
+            self.execute_attack(player_x, player_y, bullets, is_enraged)
+
+    def execute_attack(self, target_x, target_y, bullets, is_enraged):
+        ang_to_player = math.atan2(target_y - self.y, target_x - self.x)
+
+        # Pattern 1: High-Speed Sniper Barrage + Flankers
+        if self.attack_mode == 0:
+            bullets.append(Bullet(self.x, self.y + 25, math.cos(ang_to_player) * 7.5, math.sin(ang_to_player) * 7.5, is_player=False, color=C_YELLOW, radius=6))
+            bullets.append(Bullet(self.x, self.y + 25, math.cos(ang_to_player - 0.25) * 6.2, math.sin(ang_to_player - 0.25) * 6.2, is_player=False, color=C_RED, radius=5))
+            bullets.append(Bullet(self.x, self.y + 25, math.cos(ang_to_player + 0.25) * 6.2, math.sin(ang_to_player + 0.25) * 6.2, is_player=False, color=C_RED, radius=5))
+
+        # Pattern 2: Rotating 360-Degree Radial Spiral
+        elif self.attack_mode == 1:
+            self.spiral_angle += 0.35
+            arms = 6 + min(self.level, 4)
+            for i in range(arms):
+                ang = self.spiral_angle + (i * (2 * math.pi / arms))
+                bullets.append(Bullet(self.x, self.y + 25, math.cos(ang) * 4.6, math.sin(ang) * 4.6, is_player=False, color=C_PURPLE, radius=5))
+
+        # Pattern 3: Shotgun Spread Storm
+        elif self.attack_mode == 2:
+            count = 5 + min(self.level, 5)
+            for i in range(count):
+                offset = (i - (count - 1) / 2) * 0.22
+                ang = ang_to_player + offset
+                spd = random.uniform(5.0, 7.0)
+                bullets.append(Bullet(self.x, self.y + 25, math.cos(ang) * spd, math.sin(ang) * spd, is_player=False, color=C_ORANGE, radius=5))
+
+    def draw(self, surface):
+        cx, cy = int(self.x), int(self.y)
+        is_enraged = (self.health / self.max_health) < 0.35
+
+        # Hull & Enrage Aura
+        if is_enraged:
+            pygame.draw.circle(surface, C_ORANGE, (cx, cy), self.radius + 6, 2)
+
+        pygame.draw.circle(surface, C_PURPLE if not is_enraged else C_RED, (cx, cy), self.radius)
+        pygame.draw.circle(surface, C_RED if not is_enraged else C_YELLOW, (cx, cy), self.radius - 12)
+        pygame.draw.circle(surface, C_WHITE, (cx, cy), 9)
+
+        # Spikes
+        wing_l = [(cx - 60, cy + 10), (cx - 24, cy - 28), (cx - 16, cy + 28)]
+        wing_r = [(cx + 60, cy + 10), (cx + 24, cy - 28), (cx + 16, cy + 28)]
+        pygame.draw.polygon(surface, C_RED, wing_l)
+        pygame.draw.polygon(surface, C_RED, wing_r)
+        pygame.draw.polygon(surface, C_WHITE, wing_l, 2)
+        pygame.draw.polygon(surface, C_WHITE, wing_r, 2)
+
+        # Overhead Health Bar
+        if self.y > 0:
+            b_bar_w = 95
+            b_bar_h = 8
+            b_bar_x = cx - b_bar_w // 2
+            b_bar_y = cy - self.radius - 22
+            pct = max(0.0, self.health / self.max_health)
+            
+            pygame.draw.rect(surface, C_DARK_BAR, (b_bar_x, b_bar_y, b_bar_w, b_bar_h), border_radius=2)
+            pygame.draw.rect(surface, C_YELLOW if is_enraged else C_RED, (b_bar_x, b_bar_y, int(b_bar_w * pct), b_bar_h), border_radius=2)
+            pygame.draw.rect(surface, C_WHITE, (b_bar_x, b_bar_y, b_bar_w, b_bar_h), 1, border_radius=2)
+
+            tag_text = "ENRAGED!" if is_enraged else f"MK-{self.level}"
+            tag = font_tiny.render(f"{tag_text} [{int(self.health)}/{int(self.max_health)}]", True, C_YELLOW if is_enraged else C_ORANGE)
+            surface.blit(tag, (cx - tag.get_width() // 2, b_bar_y - 14))
+
+# ------------------------------------------------------------------------------
+# Main Game Loop
+# ------------------------------------------------------------------------------
+def run_game():
+    player = Player(WIDTH // 2, HEIGHT - 100)
+    bosses = [Boss(level=1)]
+    boss_spawn_counter = 1
+    
+    bullets = []
+    score = 0
+    game_over = False
+
+    # 15-Second Hardcore Boss Interval
+    BOSS_SPAWN_INTERVAL = 15 * 1000
+    last_boss_spawn_time = pygame.time.get_ticks()
+
+    while True:
+        current_time = pygame.time.get_ticks()
+        clock.tick(60)
+        screen.fill(C_BG)
+
+        # Events
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r and game_over:
+                    return run_game()
+
+        # Gameplay Logic
+        if not game_over:
+            # 15-Second Coexisting Boss Spawner
+            time_since_spawn = current_time - last_boss_spawn_time
+            if time_since_spawn >= BOSS_SPAWN_INTERVAL:
+                boss_spawn_counter += 1
+                bosses.append(Boss(level=boss_spawn_counter))
+                last_boss_spawn_time = current_time
+
+            # Player Controls
+            keys = pygame.key.get_pressed()
+            dx = (keys[pygame.K_d] or keys[pygame.K_RIGHT]) - (keys[pygame.K_a] or keys[pygame.K_LEFT])
+            dy = (keys[pygame.K_s] or keys[pygame.K_DOWN]) - (keys[pygame.K_w] or keys[pygame.K_UP])
+            dash = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+            player.move(dx, dy, dash)
+
+            # Rapid Plasma Fire
+            player.shoot_cooldown -= 1
+            if (keys[pygame.K_SPACE] or pygame.mouse.get_pressed()[0]) and player.shoot_cooldown <= 0:
+                bullets.append(Bullet(player.x - 12, player.y - 15, 0, -13, is_player=True, color=C_CYAN, radius=4))
+                bullets.append(Bullet(player.x + 12, player.y - 15, 0, -13, is_player=True, color=C_CYAN, radius=4))
+                player.shoot_cooldown = 8
+
+            # Update All Active Bosses
+            for b in bosses:
+                b.update(player.x, player.y, bullets)
+
+            # Update Bullets & Collisions
+            for b in bullets[:]:
+                b.update()
+                if not b.alive:
+                    bullets.remove(b)
+                    continue
+
+                # Player bullets hitting Boss
+                if b.is_player:
+                    for boss in bosses:
+                        if boss.alive and boss.y > 0:
+                            dist = math.hypot(b.x - boss.x, b.y - boss.y)
+                            if dist < boss.radius + b.radius:
+                                boss.health -= 12
+                                score += 60
+                                b.alive = False
+                                for _ in range(3):
+                                    add_particle(b.x, b.y, random.uniform(-3, 3), random.uniform(-3, 3), C_ORANGE, 15, 3)
+                                
+                                if boss.health <= 0:
+                                    boss.alive = False
+                                    score += 3500
+                                    for _ in range(50):
+                                        add_particle(boss.x, boss.y, random.uniform(-8, 8), random.uniform(-8, 8), C_RED, 40, 6)
+                                break
+
+                # Enemy bullets hitting Player
+                else:
+                    if player.invulnerable_timer <= 0:
+                        dist = math.hypot(b.x - player.x, b.y - player.y)
+                        if dist < player.radius + b.radius:
+                            player.health -= 14
+                            b.alive = False
+                            for _ in range(6):
+                                add_particle(player.x, player.y, random.uniform(-4, 4), random.uniform(-4, 4), C_RED, 15, 3)
+                            
+                            if player.health <= 0:
+                                player.health = 0
+                                game_over = True
+                                for _ in range(60):
+                                    add_particle(player.x, player.y, random.uniform(-7, 7), random.uniform(-7, 7), C_CYAN, 45, 6)
+
+            # Clean dead bosses
+            bosses = [b for b in bosses if b.alive]
+
+            if len(bosses) == 0:
+                boss_spawn_counter += 1
+                bosses.append(Boss(level=boss_spawn_counter))
+                last_boss_spawn_time = current_time
+
+        # Render Pass
+        update_and_draw_stars(screen)
+        update_and_draw_particles(screen)
+
+        for b in bullets:
+            b.draw(screen)
+
+        for boss in bosses:
+            boss.draw(screen)
+
+        if not game_over:
+            player.draw(screen)
+
+        # ----------------------------------------------------------------------
+        # HUD
+        # ----------------------------------------------------------------------
+        # Player HP Bar
+        p_bar_w, p_bar_h = 240, 20
+        p_bar_x, p_bar_y = 30, HEIGHT - 45
+        p_pct = max(0.0, player.health / player.max_health)
+        pygame.draw.rect(screen, C_DARK_BAR, (p_bar_x, p_bar_y, p_bar_w, p_bar_h), border_radius=4)
+        pygame.draw.rect(screen, C_GREEN if p_pct > 0.3 else C_RED, (p_bar_x, p_bar_y, int(p_bar_w * p_pct), p_bar_h), border_radius=4)
+        pygame.draw.rect(screen, C_WHITE, (p_bar_x, p_bar_y, p_bar_w, p_bar_h), 2, border_radius=4)
+        p_text = font_small.render(f"HULL INTEGRITY: {int(player.health)}/{int(player.max_health)}", True, C_WHITE)
+        screen.blit(p_text, (p_bar_x, p_bar_y - 20))
+
+        # Dash Status
+        dash_ready = player.dash_cooldown <= 0
+        dash_text = font_small.render("DASH [LSHIFT]: READY" if dash_ready else f"DASH: {player.dash_cooldown / 60:.1f}s", True, C_CYAN if dash_ready else (120, 120, 150))
+        screen.blit(dash_text, (p_bar_x + p_bar_w + 25, p_bar_y + 2))
+
+        # Top Bar Info
+        time_left_sec = max(0.0, (BOSS_SPAWN_INTERVAL - (current_time - last_boss_spawn_time)) / 1000.0)
+        score_text = font_med.render(f"SCORE: {score}", True, C_WHITE)
+        boss_count_text = font_med.render(f"ACTIVE BOSSES: {len(bosses)}", True, C_ORANGE)
+        timer_text = font_med.render(f"NEXT INVASION: {time_left_sec:04.1f}s", True, C_RED if time_left_sec < 4.0 else C_CYAN)
+
+        screen.blit(score_text, (30, 20))
+        screen.blit(boss_count_text, (WIDTH // 2 - boss_count_text.get_width() // 2, 20))
+        screen.blit(timer_text, (WIDTH - 260, 20))
+
+        # Game Over Screen
+        if game_over:
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 210))
+            screen.blit(overlay, (0, 0))
+            
+            go_text = font_large.render("PILOT ELIMINATED", True, C_RED)
+            final_score = font_med.render(f"Final Score: {score} | Waves Survived: {boss_spawn_counter}", True, C_CYAN)
+            res_text = font_med.render("Press 'R' to Relaunch", True, C_WHITE)
+            
+            screen.blit(go_text, (WIDTH // 2 - go_text.get_width() // 2, HEIGHT // 2 - 60))
+            screen.blit(final_score, (WIDTH // 2 - final_score.get_width() // 2, HEIGHT // 2))
+            screen.blit(res_text, (WIDTH // 2 - res_text.get_width() // 2, HEIGHT // 2 + 45))
+
+        pygame.display.flip()
+
+if __name__ == "__main__":
+    run_game()
