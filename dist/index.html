@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Real-Time 3D City Navigation and Visibility Analysis — Projection + Hidden Surface Removal (HSR) using Three.js" />
+  <title>Real-Time 3D City Navigation &amp; Visibility Analysis</title>
+  <!-- Modern Google Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script type="module" crossorigin src="/assets/index-RMOTu4zx.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Co9-YT5H.css">
+</head>
+<body>
+
+  <!-- ======= LOADING OVERLAY ======= -->
+  <div id="loading-overlay">
+    <div id="loading-content">
+      <div id="loading-spinner"></div>
+      <p id="loading-text">Loading Manhattan City Model…</p>
+      <div id="loading-bar-container">
+        <div id="loading-bar"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======= ERROR OVERLAY ======= -->
+  <div id="error-overlay" style="display:none;">
+    <div id="error-content">
+      <h2>⚠️ Model Loading Error</h2>
+      <p id="error-message">Could not load the city model.</p>
+      <p>Ensure <code>city.glb</code> is present in the <code>public/</code> folder.</p>
+    </div>
+  </div>
+
+  <!-- ======= 3D CANVAS (Three.js WebGL / HSR Depth Buffer) ======= -->
+  <canvas id="city-canvas"></canvas>
+
+  <!-- ======= TOP-LEFT: STATUS PANEL ======= -->
+  <div id="status-panel" class="ui-panel">
+    <h3>Graphics &amp; Navigation Status</h3>
+    <div class="status-row">
+      <span class="label">Projection:</span>
+      <span id="projection-mode" class="badge">Perspective</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Mode:</span>
+      <span id="nav-status">Overview</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Camera Y:</span>
+      <span id="cam-y-display" class="highlight">--</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Camera Pos:</span>
+      <span id="cam-pos-display" class="mono">X: 0 | Z: 0</span>
+    </div>
+    <div class="status-row">
+      <span class="label">HSR:</span>
+      <span id="hsr-display" class="badge-success">Z-Buffer Active</span>
+    </div>
+    <div class="status-row">
+      <span class="label">FPS:</span>
+      <span id="fps-display">--</span>
+    </div>
+  </div>
+
+  <!-- ======= TOP-RIGHT: CONTROLS PANEL ======= -->
+  <div id="controls-panel" class="ui-panel">
+    <h3>Controls</h3>
+    <button id="btn-start-nav" class="btn-primary">▶ Start First-Person Walk</button>
+    <button id="btn-reset-view" class="btn-secondary">↺ City Overview</button>
+    <button id="btn-toggle-projection" class="btn-secondary">Toggle Projection (Persp / Ortho)</button>
+    <div id="controls-help">
+      <p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> — Walk</p>
+      <p><kbd>Shift</kbd> — Sprint</p>
+      <p><kbd>Mouse</kbd> — Look around</p>
+      <p><kbd>E</kbd> / <kbd>Click</kbd> — Test Line of Sight</p>
+      <p><kbd>Esc</kbd> — Exit navigation</p>
+    </div>
+  </div>
+
+  <!-- ======= BOTTOM-LEFT: VISIBILITY ANALYSIS PANEL ======= -->
+  <div id="visibility-panel" class="ui-panel">
+    <h3>Visibility Analysis (HSR / LOS)</h3>
+    <p class="panel-description">Click a building or aim and press <kbd>E</kbd> to test line-of-sight from the observer.</p>
+    <button id="btn-enable-visibility" class="btn-primary">🎯 Visibility Mode: ON</button>
+    <div id="visibility-result">
+      <div class="status-row">
+        <span class="label">Target:</span>
+        <span id="vis-target-name" class="mono">—</span>
+      </div>
+      <div class="status-row">
+        <span class="label">Distance:</span>
+        <span id="vis-distance" class="mono">—</span>
+      </div>
+      <div class="status-row">
+        <span class="label">Result:</span>
+        <span id="vis-result-text" class="status-waiting">Select a building</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======= CENTER: CROSSHAIR (active during first-person walk) ======= -->
+  <div id="crosshair" style="display:none;"></div>
+
+  <!-- ======= MAIN JAVASCRIPT ENTRY POINT ======= -->
+</body>
+</html>
